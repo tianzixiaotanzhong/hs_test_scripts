@@ -1,0 +1,87 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+*.manifest
+*.spec
+
+# Virtual Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.Python
+pyvenv.cfg
+pip-selfcheck.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude
+.claude/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+coverage.xml
+*.cover
+.hypothesis/
+
+# Logs
+*.log
+logs/
+*.out
+*.err
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Config files with secrets
+*.env
+.env.*
+config.local.json
+settings.local.json
+
+# Compiled files
+*.class
+*.jar
+*.war
+*.ear
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.swp
+*.orig
+
+# OS files
+Thumbs.db
+desktop.ini
+
+# Monitoring output
+*.csv
+results/
+monitoring_results/
+stress_test_results/

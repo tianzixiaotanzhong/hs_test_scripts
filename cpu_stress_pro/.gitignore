@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Test results
+results/
+*.csv
+*.log
+*.png
+*.json
+
+# Config files with credentials
+*_prod.json
+*_local.json
+config.json
+
+# OS
+.DS_Store
+Thumbs.db
