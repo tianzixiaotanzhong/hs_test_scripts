@@ -263,23 +263,23 @@ class L7Driver:
     
     def reset_alarm(self) -> bool:
         """
-        Reset servo alarm.
+        Reset servo alarm via auxiliary function register.
         
-        Returns
-        -------
-        bool
-            True if successful
-            
-        Raises
-        ------
-        NotConnectedError
-            If not connected
+        Docs: Write 0x1111 to PA0.25 (aux_function) to clear current alarm.
+        Optionally write 0x1122 to clear history.
         """
         self._check_connection()
         
         logger.info("Resetting alarm")
-        # TODO: Implement proper alarm reset via DI or register
-        return True
+        try:
+            success = self._params.write('aux_function', 0x1111)
+            if not success:
+                return False
+            time.sleep(0.05)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to reset alarm: {e}")
+            return False
     
     def set_control_mode(self, mode: ControlMode) -> bool:
         """
@@ -808,6 +808,139 @@ class L7Driver:
         """Context manager exit."""
         self.disconnect()
     
+    # ==================== PR Control ====================
+    
+    def trigger_pr(self, path_id: int) -> bool:
+        """
+        Trigger PR path via direct register write (0x6002).
+        
+        Verified frames:
+        - 0x0010 -> PR0, 0x0011 -> PR1 ... 0x0010 | path_id
+        """
+        self._check_connection()
+        if not 0 <= path_id <= 15:
+            raise InvalidPathError(path_id)
+        return self._modbus.write_register(0x6002, 0x0010 | (path_id & 0x0F))
+    
+    def set_pr_path(self, path_id: int, position: int, speed: int, 
+                   acceleration: int = 100, deceleration: int = 100,
+                   delay: int = 0, s_curve: int = 0) -> bool:
+        """
+        Configure PR path.
+        
+        Parameters
+        ----------
+        path_id : int
+            Path ID (0-15)
+        position : int
+            Target position in pulses
+        speed : int
+            Speed in RPM
+        acceleration : int
+            Acceleration time in ms/kRPM
+        deceleration : int
+            Deceleration time in ms/kRPM
+        delay : int
+            Delay time in ms
+        s_curve : int
+            S-curve time in ms
+            
+        Returns
+        -------
+        bool
+            True if successful
+        """
+        from .motion import PRPath
+        
+        path = PRPath(
+            path_id=path_id,
+            position=position,
+            speed=speed,
+            acceleration=acceleration,
+            deceleration=deceleration,
+            delay=delay,
+            s_curve=s_curve
+        )
+        
+        return self._motion.set_pr_path(path)
+    
+    def stop_pr_motion(self) -> bool:
+        """
+        Stop PR motion.
+        
+        Returns
+        -------
+        bool
+            True if successful
+        """
+        # Direct emergency stop via 0x6002 = 0x0040
+        self._check_connection()
+        return self._modbus.write_register(0x6002, 0x0040)
+    
+    def get_current_pr_path(self) -> Optional[int]:
+        """
+        Get currently executing PR path.
+        
+        Returns
+        -------
+        Optional[int]
+            Current path ID or None
+        """
+        return self._motion.get_current_pr_path()
+    
+    def get_pr_position(self) -> Optional[int]:
+        """
+        Get current PR position.
+        
+        Returns
+        -------
+        Optional[int]
+            PR position in pulses or None
+        """
+        return self._motion.get_pr_position()
+    
+    def is_pr_complete(self) -> bool:
+        """
+        Check if PR motion is complete.
+        
+        Returns
+        -------
+        bool
+            True if complete
+        """
+        return self._motion.is_pr_complete()
+
+    # ==================== Convenience getters for tests ====================
+
+    def get_alarm_code(self) -> int:
+        """Read raw alarm code register (0x0B1F)."""
+        self._check_connection()
+        value = self._params.read('alarm_code')
+        return int(value) if value is not None else 0
+
+    def get_digital_inputs(self) -> int:
+        """Read DI status (0x0400)."""
+        self._check_connection()
+        value = self._params.read('di_status')
+        return int(value) if value is not None else 0
+
+    def get_digital_outputs(self) -> int:
+        """Read DO status (0x0410)."""
+        self._check_connection()
+        value = self._params.read('do_status')
+        return int(value) if value is not None else 0
+
+    def get_temperature(self):
+        """Read driver temperature (0x0B0B), returns Celsius as float if available."""
+        self._check_connection()
+        raw = self._params.read('driver_temperature')
+        if raw is None:
+            return None
+        try:
+            return float(raw) / 10.0
+        except Exception:
+            return None
+
     def __repr__(self) -> str:
         """String representation."""
         status = "connected" if self.is_connected else "disconnected"

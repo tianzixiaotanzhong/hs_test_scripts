@@ -8,10 +8,6 @@ import time
 import logging
 from test_framework import L7TestBase
 
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
 
 
@@ -22,10 +18,8 @@ class PRCycleTest:
         self.test_base = L7TestBase()
         
     def trigger_pr(self, driver, pr_num):
-        """触发指定PR运动"""
+        """触发指定PR运动（直接写0x6002，等价于串口帧）"""
         print(f"\n触发 PR{pr_num}...")
-        
-        # 触发PR运动
         success = driver.trigger_pr(pr_num)
         if not success:
             print(f"✗ PR{pr_num} 触发失败")
@@ -114,84 +108,43 @@ class PRCycleTest:
             
 
 def main():
-    """主函数"""
+    """主函数（简化版）"""
     print("\n雷赛L7伺服驱动器 - PR模式循环测试")
     print("=" * 50)
     print("注意: PR参数需要预先通过上位机配置")
     
-    # 创建测试实例
     test = PRCycleTest()
-    
-    # 连接驱动器
     with test.test_base.connect_driver() as driver:
         if not driver:
             print("✗ 无法连接到驱动器")
             return
-            
         print(f"✓ 成功连接到 {test.test_base.connected_port}")
         
+        # 直接尝试使能并进入简洁菜单/循环
         try:
-            # 清除报警
-            driver.reset_alarm()
-            print("✓ 报警已清除")
-            
-            # 切换到PR模式
-            print("\n切换到PR模式...")
-            success = driver.set_control_mode('pr')
-            if not success:
-                print("✗ 无法切换到PR模式")
-                return
-            print("✓ 已切换到PR模式")
-            
-            # 使能伺服
-            print("\n使能伺服...")
             driver.servo_on()
-            if not driver.is_servo_on():
-                print("✗ 伺服使能失败")
-                return
-            print("✓ 伺服已使能")
-            
-            # 等待稳定
-            time.sleep(0.5)
-            
-            # 选择测试模式
-            print("\n选择测试模式:")
-            print("1. 单次循环 (PR0→PR1→PR2→PR3)")
-            print("2. 多次循环 (指定循环次数)")
-            print("3. 连续循环 (按Ctrl+C停止)")
-            
-            choice = input("\n请选择 (1/2/3): ")
-            
-            if choice == '1':
-                # 单次循环
-                test.run_cycle(driver, cycles=1, delay=1.0)
-                
-            elif choice == '2':
-                # 多次循环
-                try:
-                    cycles = int(input("请输入循环次数: "))
-                    delay = float(input("请输入每个PR之间的延迟(秒): "))
-                    test.run_cycle(driver, cycles=cycles, delay=delay)
-                except ValueError:
-                    print("✗ 输入无效")
-                    
-            elif choice == '3':
-                # 连续循环
-                test.run_continuous_cycle(driver)
-                
-            else:
-                print("✗ 无效的选择")
-                
-        except Exception as e:
-            logger.error(f"测试过程中出错: {e}")
-            print(f"\n✗ 测试过程中出错: {e}")
-            
+            time.sleep(0.3)
+            print("\n操作: [0]PR0  [1]PR1  [2]PR2  [3]PR3  [C]循环  [E]急停  [Q]退出")
+            while True:
+                sel = input("> ").strip().lower()
+                if sel in ('0', '1', '2', '3'):
+                    test.trigger_pr(driver, int(sel))
+                elif sel == 'c':
+                    test.run_cycle(driver, cycles=1, delay=1.0)
+                elif sel == 'e':
+                    print("急停...")
+                    driver.stop_pr_motion()
+                elif sel == 'q':
+                    break
+                else:
+                    print("无效选择")
         finally:
-            # 禁用伺服
             print("\n禁用伺服...")
-            driver.servo_off()
+            try:
+                driver.servo_off()
+            except Exception:
+                pass
             print("✓ 伺服已禁用")
-            
     print("\n测试结束")
 
 

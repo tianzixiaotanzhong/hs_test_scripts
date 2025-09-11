@@ -4,6 +4,7 @@
 """
 
 import logging
+import os
 import time
 import json
 from typing import Optional, List, Dict, Any, Callable
@@ -12,12 +13,14 @@ from datetime import datetime
 from leisai_l7_driver.leisai import L7Driver
 from leisai_l7_driver.leisai.core.constants import ControlMode, ServoStatus
 
-# 配置日志
+# 配置日志：统一写入 logs 目录
+_LOG_DIR = os.path.join(os.path.dirname(__file__), 'logs') if '__file__' in globals() else 'logs'
+os.makedirs(_LOG_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.FileHandler(f'test_log_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'),
+        logging.FileHandler(os.path.join(_LOG_DIR, f'test_log_{datetime.now().strftime("%Y%m%d_%H%M%S")}.log'), encoding='utf-8'),
         logging.StreamHandler()
     ]
 )
@@ -63,8 +66,10 @@ class L7TestBase:
             已连接的驱动器实例
         """
         try:
-            self._connect()
-            yield self.driver
+            if self._connect():
+                yield self.driver
+            else:
+                yield None
         finally:
             self._disconnect()
     

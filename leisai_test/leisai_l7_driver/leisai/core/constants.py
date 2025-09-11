@@ -17,6 +17,7 @@ class ControlMode(IntEnum):
     POSITION_SPEED = 0x03
     POSITION_TORQUE = 0x04
     SPEED_TORQUE = 0x05
+    PR = 0x06  # PR path control mode
 
 
 class ServoStatus(IntEnum):
@@ -93,6 +94,9 @@ PARAMETER_ADDRESS: Dict[str, int] = {
     'reverse_mode': 0x0008,
     'position_error_limit': 0x000E,
     'position_error_clear': 0x000F,
+    # Auxiliary/utility (per docs: PA0.22, PA0.25)
+    'mode_switch_selector': 0x002D,   # PA0.22 PR<->P/S/T 切换选择（仅当控制模式为PR时有效）
+    'aux_function': 0x0033,           # PA0.25 辅助功能（0x1111清当前报警等）
     
     # Gain adjustment (0x0100 - 0x01FF)
     'rigidity_level': 0x0100,
@@ -234,6 +238,17 @@ ALARM_DESCRIPTIONS: Dict[int, str] = {
     0xA0: "Parameter error",
     0xB0: "Motor model mismatch",
     0xC0: "EEPROM error",
+    # 系统状态代码（非错误）
+    0xFFE0: "System status (normal operation)",
+    0xFFF4: "System status (normal operation)", 
+    0xFFFC: "System status (normal operation)",
+    0xFFEC: "System status (normal operation)",
+    0xD06C: "Initialization status (normal during startup)",
+}
+
+# 系统状态代码（这些不是真正的错误，可以忽略）
+SYSTEM_STATUS_CODES = {
+    0xFFE0, 0xFFF4, 0xFFFC, 0xFFEC, 0xD06C
 }
 
 # DI function codes

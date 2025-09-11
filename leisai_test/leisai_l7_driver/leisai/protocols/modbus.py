@@ -278,12 +278,12 @@ class ModbusRTU:
                 
                 # Send request
                 request_bytes = request.to_bytes()
-                logger.debug(f"TX: {request_bytes.hex()}")
+                logger.info(f"TX: {request_bytes.hex(' ').upper()}")
                 self.serial.write(request_bytes)
                 
                 # Receive response
                 response_bytes = self._receive_response(request.slave_id, request.function_code)
-                logger.debug(f"RX: {response_bytes.hex()}")
+                logger.info(f"RX: {response_bytes.hex(' ').upper()}")
                 
                 # Parse response
                 response = ModbusFrame.from_bytes(response_bytes)
