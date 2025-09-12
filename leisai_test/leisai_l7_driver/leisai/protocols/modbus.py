@@ -545,7 +545,8 @@ class ModbusClient:
         """
         values = self.read_registers(address, 2)
         if values and len(values) == 2:
-            value = (values[1] << 16) | values[0]
+            # 高位在前，低位在后 (big-endian)
+            value = (values[0] << 16) | values[1]
             # Handle sign extension
             if value & 0x80000000:
                 value = value - 0x100000000

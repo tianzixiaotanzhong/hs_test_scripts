@@ -167,8 +167,8 @@ class ParameterManager:
         """Read 32-bit value from two registers."""
         values = self._modbus.read_registers(address, 2)
         if values and len(values) == 2:
-            # Combine low and high words (little-endian)
-            value = (values[1] << 16) | values[0]
+            # Combine high and low words (big-endian: 高位在前，低位在后)
+            value = (values[0] << 16) | values[1]
             # For position values, treat as signed 32-bit integer
             if value & 0x80000000:
                 value = value - 0x100000000
@@ -179,7 +179,8 @@ class ParameterManager:
         """Write 32-bit value to two registers."""
         low = value & 0xFFFF
         high = (value >> 16) & 0xFFFF
-        return self._modbus.write_registers(address, [low, high])
+        # Big-endian: 高位在前，低位在后
+        return self._modbus.write_registers(address, [high, low])
     
     def save_to_eeprom(self) -> bool:
         """

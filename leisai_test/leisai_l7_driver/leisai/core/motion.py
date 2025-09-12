@@ -6,12 +6,14 @@ speed, torque control, and PR path control.
 """
 
 import logging
+import time
+import threading
 from typing import Optional, List
 from dataclasses import dataclass
 
 from .constants import (
     PR_PATH_BASE, PR_PATH_SIZE,
-    HomingMode, MAX_SPEED_RPM, MAX_POSITION
+    HomingMode, MAX_SPEED_RPM, MAX_POSITION, MIN_POSITION
 )
 from .exceptions import (
     InvalidPathError, MotionError,
@@ -69,6 +71,8 @@ class MotionController:
         """
         self._modbus = modbus_client
         self._params = param_manager
+        self._jog_thread = None
+        self._jog_stop_event = threading.Event()
     
     # ==================== Basic Motion ====================
     
@@ -208,17 +212,39 @@ class MotionController:
         """
         logger.info(f"Starting JOG: {speed} rpm, {'forward' if direction else 'reverse'}")
         
-        # Set JOG speed with direction
-        jog_speed = speed if direction else -speed
-        success = self._params.write('pr_jog_speed', jog_speed)
+        # Stop any existing JOG
+        self.stop_jog()
+        
+        # Set control mode to PR (0x06) for JOG control
+        success = self._params.write('control_mode', 0x06)
         
         if success:
-            # Trigger JOG via PR control register
-            pr_control = self._params.read('pr_control') or 0
-            pr_control |= 0x0002  # Set JOG trigger bit
-            success = self._params.write('pr_control', pr_control)
+            # Set JOG speed
+            success = self._params.write('pr_jog_speed', speed)
+            
+            if success:
+                # Start JOG thread for continuous command sending
+                self._jog_stop_event.clear()
+                self._jog_thread = threading.Thread(
+                    target=self._jog_worker,
+                    args=(direction,),
+                    daemon=True
+                )
+                self._jog_thread.start()
         
         return success
+    
+    def _jog_worker(self, direction: bool):
+        """JOG worker thread that sends commands every 50ms."""
+        jog_command = 0x4001 if direction else 0x4002
+        
+        while not self._jog_stop_event.is_set():
+            try:
+                self._params.write('aux_function', jog_command)
+                time.sleep(0.05)  # 50ms interval
+            except Exception as e:
+                logger.error(f"JOG command failed: {e}")
+                break
     
     def stop_jog(self) -> bool:
         """
@@ -231,10 +257,15 @@ class MotionController:
         """
         logger.info("Stopping JOG")
         
-        # Clear JOG trigger bit
-        pr_control = self._params.read('pr_control') or 0
-        pr_control &= ~0x0002
-        return self._params.write('pr_control', pr_control)
+        # Signal JOG thread to stop
+        self._jog_stop_event.set()
+        
+        # Wait for thread to finish
+        if self._jog_thread and self._jog_thread.is_alive():
+            self._jog_thread.join(timeout=1.0)
+        
+        # Stop JOG by writing 0 to aux_function
+        return self._params.write('aux_function', 0)
     
     # ==================== Homing ====================
     

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from .constants import (
     ControlMode, ServoStatus, AlarmCode,
     PARAMETER_ADDRESS, ALARM_DESCRIPTIONS,
-    PR_PATH_BASE, PR_PATH_SIZE
+    PR_PATH_BASE, PR_PATH_SIZE, DOSignal
 )
 from .exceptions import (
     NotConnectedError, ServoNotReadyError,
@@ -186,17 +186,19 @@ class L7Driver:
         """
         Enable servo.
         
+        Note: L7 servo enable requires external IO control (SRV-ON signal).
+        
         Returns
         -------
         bool
-            True if successful
+            Always raises ServoNotReadyError
             
         Raises
         ------
         NotConnectedError
             If not connected
         ServoNotReadyError
-            If servo has active alarm
+            Always raised - requires external IO control
         """
         self._check_connection()
         
@@ -205,39 +207,52 @@ class L7Driver:
         if alarm != AlarmCode.NO_ALARM:
             raise ServoNotReadyError(alarm_code=alarm)
         
-        logger.info("Enabling servo")
-        success = self._params.write('servo_enable', 1)
-        
-        if success:
-            self._status = ServoStatus.IDLE
-            logger.info("Servo enabled")
-        
-        return success
+        raise ServoNotReadyError(
+            message="L7 servo enable requires external IO control (SRV-ON signal)."
+        )
     
     def servo_off(self) -> bool:
         """
         Disable servo.
         
+        Note: L7 servo disable requires external IO control (SRV-ON signal).
+        
         Returns
         -------
         bool
-            True if successful
+            Always raises ServoNotReadyError
             
         Raises
         ------
         NotConnectedError
             If not connected
+        ServoNotReadyError
+            Always raised - requires external IO control
         """
         self._check_connection()
         
-        logger.info("Disabling servo")
-        success = self._params.write('servo_enable', 0)
-        
-        if success:
-            self._status = ServoStatus.DISABLED
-            logger.info("Servo disabled")
-        
-        return success
+        raise ServoNotReadyError(
+            message="L7 servo disable requires external IO control (SRV-ON signal)."
+        )
+
+    def is_servo_on(self) -> bool:
+        """
+        Check whether servo is enabled.
+
+        Returns
+        -------
+        bool
+            True if servo is enabled
+        """
+        self._check_connection()
+
+        try:
+            do_status = self._params.read('do_status')
+            if do_status is None:
+                return False
+            return (int(do_status) & int(DOSignal.DO1_SRDY)) != 0
+        except Exception:
+            return False
     
     def emergency_stop(self) -> bool:
         """
@@ -338,6 +353,23 @@ class L7Driver:
         """
         self._check_connection()
         return self._motion.get_position()
+    
+    def get_command_position(self) -> Optional[int]:
+        """
+        Get commanded position in pulses.
+        
+        Returns
+        -------
+        Optional[int]
+            Command position in pulses, None if failed
+            
+        Raises
+        ------
+        NotConnectedError
+            If not connected
+        """
+        self._check_connection()
+        return self._motion.get_command_position()
     
     def get_speed(self) -> Optional[int]:
         """

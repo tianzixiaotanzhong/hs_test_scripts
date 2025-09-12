@@ -88,7 +88,6 @@ class HomingMode(IntEnum):
 PARAMETER_ADDRESS: Dict[str, int] = {
     # Basic settings (0x0000 - 0x00FF)
     'control_mode': 0x0002,
-    'servo_enable': 0x0003,
     'gear_ratio_numerator': 0x0006,
     'gear_ratio_denominator': 0x0007,
     'reverse_mode': 0x0008,
@@ -179,8 +178,9 @@ PARAMETER_ADDRESS: Dict[str, int] = {
     'pr_home_offset_h': 0x080D,
     'pr_home_speed_high': 0x080F,
     'pr_home_speed_low': 0x0810,
-    'pr_jog_speed': 0x0820,
-    'pr_jog_acc': 0x0821,
+    'pr_jog_speed': 0x6027,
+    'pr_jog_acc': 0x6028,
+    'pr_jog_dec': 0x6029,
     
     # Status information (0x0B00 - 0x0BFF)
     'motor_position_cmd_unit': 0x0B16,  # 32-bit motor position in command units (电机位置-指令单位)
@@ -193,13 +193,16 @@ PARAMETER_ADDRESS: Dict[str, int] = {
     'command_position_l': 0x0B1A,
     'command_position_h': 0x0B1B,
     'position_error': 0x0B04,
-    'motor_speed': 0x0B05,
-    'torque_feedback': 0x0B06,
-    'pulse_frequency': 0x0B07,
-    'analog_input_1': 0x0B08,
-    'analog_input_2': 0x0B09,
+    'servo_status': 0x0B05,  # 驱动器运行状态
+    'motor_speed': 0x0B06,   # 电机速度（未滤波）
+    'torque_feedback': 0x0B07,  # 电机力矩
+    'pulse_frequency': 0x0B08,
+    'analog_input_1': 0x0B0C,
+    'analog_input_2': 0x0B0D,
     'dc_bus_voltage': 0x0B0A,
     'driver_temperature': 0x0B0B,
+    'di_status': 0x0B11,  # 物理IO输入状态
+    'do_status': 0x0B12,  # 物理IO输出状态
     'alarm_code': 0x0B1F,
 }
 
