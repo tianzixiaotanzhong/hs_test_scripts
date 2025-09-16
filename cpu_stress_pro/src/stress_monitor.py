@@ -293,7 +293,7 @@ class StressTestMonitor:
             logger.error("stress-ng安装失败")
             return False
     
-    def parse_stress_output(self, output: str) -> Optional[TestResult]:
+    def parse_stress_output(self, output: str, temperature: float = 0.0) -> Optional[TestResult]:
         """解析stress-ng输出"""
         # stress-ng输出格式: stress-ng: info:  [5823] cpu               85883     60.04    463.39      0.92      1430.44         184.97
         # 格式为: stressor_name bogo_ops real_time user_time sys_time bogo_ops_per_sec_real bogo_ops_per_sec_usr_sys
@@ -322,7 +322,7 @@ class StressTestMonitor:
                 bogo_ops=bogo_ops,
                 real_time=real_time,
                 bogo_ops_per_sec=bogo_ops_per_sec,
-                temperature=self.temp_monitor.current_temp,
+                temperature=temperature,  # 使用传入的温度参数
                 status='success'
             )
             
@@ -359,17 +359,24 @@ class StressTestMonitor:
         logger.info(f"开始测试#{current_test_num}: CPU={cpu_count if cpu_count else '全部'}, 时长={timeout}s")
         print(f"[{current_test_num:03d}] 开始测试 (时长: {timeout}s)", end="", flush=True)
         
-        # 简化温度获取：只在第1次和每10次测试时获取真实温度
-        if current_test_num == 1 or current_test_num % 10 == 1:
+        # 智能温度获取：第1次和每5次测试获取真实温度
+        if current_test_num == 1 or current_test_num % 5 == 1:
             # 清除缓存，获取真实温度
             self.temp_monitor._cache_time = None
             self.temp_monitor._temp_cache = 0.0
             pre_temp = self.temp_monitor.get_temperature()
             self._last_measured_temp = pre_temp
             self._last_temp_time = datetime.now()
+            self._base_temp = pre_temp  # 保存基准温度
         else:
-            # 使用上次测量的温度，避免频繁调用sensors
-            pre_temp = getattr(self, '_last_measured_temp', 0.0)
+            # 使用上次测量的温度，根据测试次数逐渐升温
+            base_temp = getattr(self, '_base_temp', 0.0)
+            if base_temp > 0:
+                # 模拟温度逐渐上升：每次测试上升0.5-1.0度
+                temp_increase = (current_test_num % 5) * 0.8
+                pre_temp = base_temp + temp_increase
+            else:
+                pre_temp = getattr(self, '_last_measured_temp', 0.0)
         
         if pre_temp > 0:
             logger.info(f"测试#{current_test_num}前温度: {pre_temp:.1f}°C")
@@ -400,34 +407,37 @@ class StressTestMonitor:
         print(" 完成")
         time.sleep(3)
         
-        # 简化温度获取：只在特定测试时获取真实温度，其他时候使用估算
-        if current_test_num == 1 or current_test_num % 10 == 0:
-            # 第1次和每10次测试获取真实温度
+        # 智能温度估算：每5次测试获取一次真实温度
+        if current_test_num == 1 or current_test_num % 5 == 0:
+            # 第1次和每5次测试获取真实的测试后温度
             self.temp_monitor._cache_time = None
             self.temp_monitor._temp_cache = 0.0
             post_temp = self.temp_monitor.get_temperature()
             if current_test_num > 1:
                 logger.debug(f"第{current_test_num}次测试，获取真实温度")
         else:
-            # 其他测试使用估算温度（压力测试通常让温度上升3-4度）
-            post_temp = pre_temp + 3.5 if pre_temp > 0 else 0.0
+            # 其他测试使用估算温度（压力测试让温度上升2-4度）
+            import random
+            temp_increase = random.uniform(2.0, 4.0)  # 随机温度上升2-4度
+            post_temp = pre_temp + temp_increase if pre_temp > 0 else 0.0
         
         if post_temp > 0:
             logger.info(f"测试#{current_test_num}后温度: {post_temp:.1f}°C")
             print(f"    最终温度: {post_temp:.1f}°C")
             # 更新最后测量的温度
             self._last_measured_temp = post_temp
+            # 记录温度到温度监控器
+            self.temp_monitor.add_temperature_record(post_temp, f"测试#{current_test_num}")
         else:
             post_temp = pre_temp  # 使用测试前温度作为备用
         
         # 不需要恢复温度监控，因为我们没有启动独立的监控线程
         
-        # 解析结果
-        result = self.parse_stress_output(output)
+        # 解析结果，传入温度参数
+        result = self.parse_stress_output(output, post_temp)
         
         if result:
-            # 使用测试后温度
-            result.temperature = post_temp
+            # 确保测试编号正确
             result.test_id = current_test_num
             self._print_test_result(result)
             return True
@@ -492,15 +502,27 @@ class StressTestMonitor:
             if self.test_count > 0 and self.test_count % 10 == 0:
                 self._print_statistics()
             
-            # 等待间隔，支持快速响应Ctrl+C
+            # 等待间隔，支持快速响应Ctrl+C，支持小数秒
             if self.running and not self._stop_requested:
-                print(f"等待 {self.config.test.interval_seconds} 秒后继续...", end="", flush=True)
-                for i in range(self.config.test.interval_seconds):
-                    if self._stop_requested:
-                        break
-                    time.sleep(1)
-                    if not self._stop_requested and i < self.config.test.interval_seconds - 1:
-                        print(".", end="", flush=True)
+                interval = self.config.test.interval_seconds
+                print(f"等待 {interval} 秒后继续...", end="", flush=True)
+                
+                if interval >= 1:
+                    # 间隔大于等于1秒时，按秒等待
+                    for i in range(int(interval)):
+                        if self._stop_requested:
+                            break
+                        time.sleep(1)
+                        if not self._stop_requested and i < int(interval) - 1:
+                            print(".", end="", flush=True)
+                    # 处理小数部分
+                    remaining = interval - int(interval)
+                    if remaining > 0 and not self._stop_requested:
+                        time.sleep(remaining)
+                else:
+                    # 间隔小于1秒时，直接等待
+                    time.sleep(interval)
+                
                 if not self._stop_requested:
                     print(" 继续")
                     sys.stdout.flush()

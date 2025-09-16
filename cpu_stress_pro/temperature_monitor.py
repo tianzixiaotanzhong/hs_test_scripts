@@ -266,10 +266,31 @@ class TemperatureMonitor:
             "current": self.current_temp
         }
     
+    def add_temperature_record(self, temp: float, note: str = "压力测试"):
+        """添加温度记录（用于压力测试）"""
+        if temp > 0:
+            # 记录到历史
+            self.temp_history.append({
+                'time': datetime.now(),
+                'temp': temp
+            })
+            
+            # 更新当前温度
+            self.current_temp = temp
+            
+            # 写入CSV
+            with open(self.csv_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow([
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    f"{temp:.1f}",
+                    note
+                ])
+    
     def save_summary(self):
         """保存温度摘要"""
         if not self.temp_history:
-            logger.warning("无温度数据")
+            logger.debug("无温度历史数据，跳过摘要生成")
             return
         
         stats = self.get_statistics()

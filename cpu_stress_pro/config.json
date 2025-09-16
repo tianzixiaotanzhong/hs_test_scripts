@@ -1,0 +1,35 @@
+{
+  "connection_type": "ssh",
+  "serial": {
+    "port": "COM38",
+    "baudrate": 115200,
+    "timeout": 1
+  },
+  "ssh": {
+    "hostname": "10.2.0.18",
+    "username": "sunrise",
+    "password": "sunrise",
+    "port": 22,
+    "key_file": null
+  },
+  "ssh_list": [],
+  "test": {
+    "duration_minutes": null,
+    "interval_seconds": 0.5,
+    "max_tests": 1000,
+    "timeout_seconds": 60,
+    "enter_docker": false,
+    "install_stress_ng": true
+  },
+  "monitor": {
+    "temperature_interval": 10,
+    "temperature_duration": null,
+    "enable_temperature": true
+  },
+  "output": {
+    "base_dir": "results",
+    "create_timestamp_dir": true,
+    "save_charts": true,
+    "save_summary": true
+  }
+}

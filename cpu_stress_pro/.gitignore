@@ -18,15 +18,12 @@ ENV/
 
 # Test results
 results/
-*.csv
-*.log
-*.png
-*.json
 
-# Config files with credentials
+# Config files with credentials (但保留根目录的config.json)
 *_prod.json
 *_local.json
-config.json
+# 根目录的config.json不被忽略，但results目录中的json文件仍被忽略
+results/**/*.json
 
 # OS
 .DS_Store
