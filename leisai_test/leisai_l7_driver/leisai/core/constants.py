@@ -169,13 +169,13 @@ PARAMETER_ADDRESS: Dict[str, int] = {
     'pr_status': 0x0801,
     'pr_error_code': 0x0802,
     'pr_current_path': 0x0803,
-    'pr_current_position': 0x0804,  # 32-bit value starting at 0x0804
-    'pr_current_position_l': 0x0804,
-    'pr_current_position_h': 0x0805,
+    'pr_current_position': 0x0804,  # 32-bit value starting at 0x0804 (big-endian: 高在前)
+    'pr_current_position_h': 0x0804,
+    'pr_current_position_l': 0x0805,
     'pr_home_mode': 0x080B,
-    'pr_home_offset': 0x080C,  # 32-bit value starting at 0x080C
-    'pr_home_offset_l': 0x080C,
-    'pr_home_offset_h': 0x080D,
+    'pr_home_offset': 0x080C,  # 32-bit value starting at 0x080C (big-endian: 高在前)
+    'pr_home_offset_h': 0x080C,
+    'pr_home_offset_l': 0x080D,
     'pr_home_speed_high': 0x080F,
     'pr_home_speed_low': 0x0810,
     'pr_jog_speed': 0x6027,
@@ -183,15 +183,18 @@ PARAMETER_ADDRESS: Dict[str, int] = {
     'pr_jog_dec': 0x6029,
     
     # Status information (0x0B00 - 0x0BFF)
-    'motor_position_cmd_unit': 0x0B16,  # 32-bit motor position in command units (电机位置-指令单位)
-    'motor_position_cmd_unit_l': 0x0B16,
-    'motor_position_cmd_unit_h': 0x0B17,
-    'encoder_position': 0x0B1C,  # 32-bit motor position in encoder units (电机位置-编码器单位)
-    'encoder_position_l': 0x0B1C,
-    'encoder_position_h': 0x0B1D,
-    'command_position': 0x0B1A,  # 32-bit command position in encoder units (指令位置-编码器单位)
-    'command_position_l': 0x0B1A,
-    'command_position_h': 0x0B1B,
+    'command_position_cmd_unit': 0x0B14,  # 32-bit command position in command units (big-endian)
+    'command_position_cmd_unit_h': 0x0B14,
+    'command_position_cmd_unit_l': 0x0B15,
+    'motor_position_cmd_unit': 0x0B16,  # 32-bit motor position in command units (big-endian)
+    'motor_position_cmd_unit_h': 0x0B16,
+    'motor_position_cmd_unit_l': 0x0B17,
+    'encoder_position': 0x0B1C,  # 32-bit motor position in encoder units (big-endian)
+    'encoder_position_h': 0x0B1C,
+    'encoder_position_l': 0x0B1D,
+    'command_position': 0x0B1A,  # 32-bit command position in encoder units (big-endian)
+    'command_position_h': 0x0B1A,
+    'command_position_l': 0x0B1B,
     'position_error': 0x0B04,
     'servo_status': 0x0B05,  # 驱动器运行状态
     'motor_speed': 0x0B06,   # 电机速度（未滤波）

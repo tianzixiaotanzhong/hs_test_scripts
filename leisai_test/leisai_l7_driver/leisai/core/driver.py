@@ -930,6 +930,30 @@ class L7Driver:
             PR position in pulses or None
         """
         return self._motion.get_pr_position()
+
+    def get_pr_configured_position(self, path_id: int) -> Optional[int]:
+        """
+        获取指定PR路径配置的目标位置（指令单位，32位）。
+
+        Parameters
+        ----------
+        path_id : int
+            PR路径编号 (0-15)
+
+        Returns
+        -------
+        Optional[int]
+            目标位置（指令单位），或None表示读取失败
+        """
+        return self._motion.get_pr_configured_position(path_id)
+
+    def get_control_operation(self) -> Optional[int]:
+        """
+        读取当前控制操作码（寄存器 0x6002）。
+        用于显示最近一次PR/急停等控制写入的值。
+        """
+        self._check_connection()
+        return self._modbus.read_register(0x6002)
     
     def is_pr_complete(self) -> bool:
         """
@@ -972,6 +996,65 @@ class L7Driver:
             return float(raw) / 10.0
         except Exception:
             return None
+
+    def get_servo_status(self) -> Optional[int]:
+        """
+        获取驱动器运行状态 (485地址0x0B05).
+        
+        Returns
+        -------
+        Optional[int]
+            驱动器运行状态值，None表示读取失败
+            
+        Raises
+        ------
+        NotConnectedError
+            If not connected
+        """
+        self._check_connection()
+        return self._params.read('servo_status')
+
+    def get_servo_status_description(self) -> str:
+        """
+        获取驱动器运行状态的描述信息.
+        
+        根据雷赛L7系列手册PAB.05参数定义：
+        Bit 0: RDY - 伺服准备好
+        Bit 1: RUN - 伺服运行
+        Bit 2: ERR - 驱动器故障
+        Bit 3: HOME_OK - 回零完成
+        Bit 4: INP - 定位完成
+        Bit 5: AT-SPEED - 速度到达
+        Bit 6~15: 保留
+        
+        Returns
+        -------
+        str
+            状态描述字符串
+        """
+        status = self.get_servo_status()
+        if status is None:
+            return "状态读取失败"
+        
+        status_bits = []
+        
+        if status & 0x0001:
+            status_bits.append("伺服准备好(RDY)")
+        if status & 0x0002:
+            status_bits.append("伺服运行(RUN)")
+        if status & 0x0004:
+            status_bits.append("驱动器故障(ERR)")
+        if status & 0x0008:
+            status_bits.append("回零完成(HOME_OK)")
+        if status & 0x0010:
+            status_bits.append("定位完成(INP)")
+        if status & 0x0020:
+            status_bits.append("速度到达(AT-SPEED)")
+        
+        if not status_bits:
+            return f"状态值: 0x{status:04X} (无特殊状态)"
+        
+        return f"状态值: 0x{status:04X} - {', '.join(status_bits)}"
 
     def __repr__(self) -> str:
         """String representation."""

@@ -436,6 +436,43 @@ class MotionController:
             PR position in pulses or None
         """
         return self._params.read('pr_current_position')
+
+    def get_pr_configured_position(self, path_id: int) -> Optional[int]:
+        """
+        Read configured PR target position for a given path in command units.
+
+        Parameters
+        ----------
+        path_id : int
+            PR path ID (0-15)
+
+        Returns
+        -------
+        Optional[int]
+            32-bit position value or None if failed
+        """
+        if not 0 <= path_id <= 15:
+            return None
+        # 按文档：大端（高位在前，低位在后）
+        # PR0 高/低 -> 0x6201/0x6202；PR1 高/低 -> 0x6209/0x620A
+        if path_id == 0:
+            high_addr, low_addr = 0x6201, 0x6202
+        elif path_id == 1:
+            high_addr, low_addr = 0x6209, 0x620A
+        else:
+            # 其他路径回退到表基址方式：set_pr_path 写入为 [low, high] 从 base 开始
+            # 为保持一致，这里读取 base(低) 与 base+1(高)，再按大端组合
+            base_addr = PR_PATH_BASE + (path_id * PR_PATH_SIZE)
+            low_addr, high_addr = base_addr, base_addr + 1
+
+        high = self._modbus.read_register(high_addr)
+        low = self._modbus.read_register(low_addr)
+        if low is None or high is None:
+            return None
+        value = ((int(high) & 0xFFFF) << 16) | (int(low) & 0xFFFF)
+        if value & 0x80000000:
+            value = value - 0x100000000
+        return value
     
     def is_pr_complete(self) -> bool:
         """

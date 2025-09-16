@@ -9,14 +9,29 @@ import io
 import os
 from pathlib import Path
 
+# 强制禁用输出缓冲，确保实时显示
+os.environ['PYTHONUNBUFFERED'] = '1'
+
 # 设置UTF-8编码
 if sys.platform == 'win32':
     import locale
     locale.setlocale(locale.LC_ALL, '')
-    sys.stdout.reconfigure(encoding='utf-8')
-    sys.stderr.reconfigure(encoding='utf-8')
+    try:
+        sys.stdout.reconfigure(encoding='utf-8')
+        sys.stderr.reconfigure(encoding='utf-8')
+    except:
+        pass
 
-import argparse
+# 确保输出立即显示的函数
+def print_realtime(*args, **kwargs):
+    """实时打印函数，确保立即显示"""
+    print(*args, **kwargs)
+    sys.stdout.flush()
+
+def print_inline(*args, **kwargs):
+    """同行实时打印函数"""
+    print(*args, end='', flush=True, **kwargs)
+
 import logging
 from datetime import datetime
 import importlib.util
@@ -52,30 +67,42 @@ def run_stress_test(config_file='config.json'):
         print("配置文件验证失败")
         return
     
-    # 设置日志系统
+    # 设置日志系统 - 确保输出目录在程序开始时就确定
     output_dir = config.output.get_output_dir()
     log_manager = logger_manager.LoggerManager(output_dir)
     
-    print(f"\n连接类型: {config.connection_type}")
-    print(f"输出目录: {output_dir}\n")
+    print_realtime(f"连接目标: {config.ssh.username}@{config.ssh.hostname}:{config.ssh.port}")
+    print_realtime(f"输出目录: {output_dir}")
     
     # 创建连接
-    connection = ConnectionFactory.create_connection(
-        config.connection_type,
-        **config.get_connection_params()
-    )
-    
-    if not connection.connect():
-        print("连接失败")
+    try:
+        connection = ConnectionFactory.create_connection(
+            config.connection_type,
+            **config.get_connection_params()
+        )
+    except Exception as e:
+        print_realtime(f"创建连接失败: {e}")
         return
     
-    print("[OK] 连接成功")
+    print_inline("正在建立SSH连接...")
+    try:
+        if not connection.connect():
+            print_realtime(" 失败")
+            return
+        print_realtime(" 成功")
+    except Exception as e:
+        print_realtime(f" 异常: {e}")
+        return
     
     # 设置控制台日志
     connection.setup_console_log(log_manager.get_console_logger())
     
     # 创建监控器并运行
-    monitor = StressTestMonitor(config, connection)
+    try:
+        monitor = StressTestMonitor(config, connection)
+    except Exception as e:
+        print(f"创建监控器失败: {e}")
+        return
     
     try:
         if not monitor.start():
@@ -128,9 +155,8 @@ def run_temperature_monitor(config_file='config.json'):
     # 设置控制台日志
     connection.setup_console_log(log_manager.get_console_logger())
     
-    # 创建温度监控器
-    output_dir = config.output.get_output_dir()
-    temp_monitor = TemperatureMonitor(connection, output_dir)
+    # 创建温度监控器，使用相同的输出目录
+    temp_monitor = TemperatureMonitor(connection, output_dir, config)
     
     try:
         # 开始监控
@@ -157,45 +183,30 @@ def run_temperature_monitor(config_file='config.json'):
 
 
 def main():
-    """主入口"""
-    parser = argparse.ArgumentParser(description='CPU压力测试监控系统')
-    parser.add_argument('mode', choices=['stress', 'temp'], 
-                       help='运行模式: stress=压力测试, temp=温度监控')
-    parser.add_argument('--config', '-c', default='config.json',
-                       help='配置文件路径')
-    parser.add_argument('--generate-config', action='store_true',
-                       help='生成配置文件模板')
+    """主入口 - 直接运行压力测试"""
+    config_file = 'config.json'
     
-    args = parser.parse_args()
-    
-    # 生成配置模板
-    if args.generate_config:
+    # 检查配置文件，如果不存在则生成
+    if not Path(config_file).exists():
+        print_realtime("配置文件不存在，正在生成默认配置...")
         config = Config()
         config.connection_type = 'ssh'
-        config.ssh.hostname = '10.1.0.237'
-        config.ssh.username = 'root'
-        config.ssh.password = '12345'
-        config.save(args.config)
-        print(f"配置文件已生成: {args.config}")
+        config.ssh.hostname = '10.2.0.18'  # 使用当前的主机地址
+        config.ssh.username = 'sunrise'
+        config.ssh.password = 'sunrise'
+        config.save(config_file)
+        print_realtime(f"配置文件已生成: {config_file}")
+        print_realtime("请根据需要修改配置文件，然后重新运行程序")
         return
     
-    # 检查配置文件
-    if not Path(args.config).exists():
-        print(f"配置文件不存在: {args.config}")
-        print("使用 --generate-config 生成模板")
-        return
+    print_realtime("\n" + "="*50)
+    print_realtime("CPU压力测试监控系统")
+    print_realtime("="*50)
+    print_realtime("按 Ctrl+C 停止测试并生成报告")
+    print_realtime("="*50)
     
-    # 日志将由LoggerManager在各个模式中设置
-    
-    print("\n" + "="*50)
-    print(f"CPU压力测试监控系统")
-    print("="*50)
-    
-    # 运行对应模式
-    if args.mode == 'stress':
-        run_stress_test(args.config)
-    else:
-        run_temperature_monitor(args.config)
+    # 直接运行压力测试
+    run_stress_test(config_file)
 
 
 if __name__ == "__main__":

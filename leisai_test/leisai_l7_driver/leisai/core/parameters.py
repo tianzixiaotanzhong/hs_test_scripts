@@ -68,7 +68,7 @@ class ParameterManager:
         address = PARAMETER_ADDRESS[name]
         
         # Handle 32-bit parameters
-        if name in ['encoder_position', 'command_position', 'motor_position_cmd_unit', 'pr_current_position', 'pr_home_offset']:
+        if name in ['encoder_position', 'command_position', 'motor_position_cmd_unit', 'command_position_cmd_unit', 'pr_current_position', 'pr_home_offset']:
             value = self._read_32bit(address)
         else:
             value = self._modbus.read_register(address)
@@ -106,7 +106,7 @@ class ParameterManager:
         address = PARAMETER_ADDRESS[name]
         
         # Handle 32-bit parameters
-        if name in ['encoder_position', 'command_position', 'motor_position_cmd_unit', 'pr_current_position', 'pr_home_offset']:
+        if name in ['encoder_position', 'command_position', 'motor_position_cmd_unit', 'command_position_cmd_unit', 'pr_current_position', 'pr_home_offset']:
             success = self._write_32bit(address, value)
         else:
             success = self._modbus.write_register(address, value)

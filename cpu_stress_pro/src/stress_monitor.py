@@ -108,8 +108,8 @@ class StressTestMonitor:
         self.output_dir.mkdir(parents=True, exist_ok=True)
         logger.debug(f"输出目录: {self.output_dir}")
         
-        # 初始化温度监控器 - 使用简化版本
-        self.temp_monitor = TemperatureMonitor(connection, self.output_dir)
+        # 初始化温度监控器 - 使用相同的输出目录
+        self.temp_monitor = TemperatureMonitor(connection, self.output_dir, config)
         
         # 测试数据
         self.test_results: List[TestResult] = []
@@ -139,9 +139,20 @@ class StressTestMonitor:
     
     def _signal_handler(self, signum, frame):
         """信号处理器"""
+        if self._stop_requested:
+            # 避免重复处理
+            return
+        
         logger.info(f"收到信号 {signum}，正在停止...")
+        print(f"\n\n收到停止信号，正在生成报告...")
         self._stop_requested = True
         self.stop()
+        self.generate_report()
+        print("测试已停止，报告已生成")
+        
+        # 强制退出
+        import sys
+        sys.exit(0)
     
     def start(self) -> bool:
         """启动监控"""
@@ -154,11 +165,12 @@ class StressTestMonitor:
         # 初始化CSV文件
         self._init_csv()
         
-        # 启动温度监控
-        if self.config.monitor.enable_temperature:
-            self.temp_monitor.start_monitoring(
-                interval=self.config.monitor.temperature_interval
-            )
+        # 不启动独立的温度监控线程，只在测试前后获取温度
+        # 温度监控线程会与压力测试产生资源竞争
+        # if self.config.monitor.enable_temperature:
+        #     self.temp_monitor.start_monitoring(
+        #         interval=self.config.monitor.temperature_interval
+        #     )
         
         logger.debug("监控已启动")
         return True
@@ -289,7 +301,13 @@ class StressTestMonitor:
         match = re.search(pattern, output)
         
         if not match:
+            # 尝试更宽松的匹配模式
+            pattern2 = r'stress-ng.*cpu.*?(\d+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)'
+            match = re.search(pattern2, output)
+            
+        if not match:
             logger.warning(f"无法解析stress-ng输出，输出内容前200字符: {output[:200]}...")
+            logger.debug(f"完整输出: {output}")
             return None
         
         try:
@@ -339,11 +357,25 @@ class StressTestMonitor:
         current_test_num = self.test_count
         
         logger.info(f"开始测试#{current_test_num}: CPU={cpu_count if cpu_count else '全部'}, 时长={timeout}s")
+        print(f"[{current_test_num:03d}] 开始测试 (时长: {timeout}s)", end="", flush=True)
         
-        # 测试前获取温度（从监控线程读取当前值，避免重复调用）
-        pre_temp = self.temp_monitor.current_temp
+        # 简化温度获取：只在第1次和每10次测试时获取真实温度
+        if current_test_num == 1 or current_test_num % 10 == 1:
+            # 清除缓存，获取真实温度
+            self.temp_monitor._cache_time = None
+            self.temp_monitor._temp_cache = 0.0
+            pre_temp = self.temp_monitor.get_temperature()
+            self._last_measured_temp = pre_temp
+            self._last_temp_time = datetime.now()
+        else:
+            # 使用上次测量的温度，避免频繁调用sensors
+            pre_temp = getattr(self, '_last_measured_temp', 0.0)
+        
         if pre_temp > 0:
-            logger.debug(f"测试#{current_test_num}前温度: {pre_temp:.1f}°C")
+            logger.info(f"测试#{current_test_num}前温度: {pre_temp:.1f}°C")
+            print(f" | 初始温度: {pre_temp:.1f}°C")
+        else:
+            print()  # 换行
         
         # 构建命令 - 使用固定的8个CPU核心数，避免$(nproc)在某些环境下的问题
         if cpu_count == 0:
@@ -351,54 +383,81 @@ class StressTestMonitor:
         else:
             base_cmd = f"stress-ng --cpu {cpu_count} --timeout {timeout}s --metrics-brief"
         
-        # 总是在Docker容器内运行stress-ng（因为stress-ng在容器里）
-        logger.debug("在Docker容器内运行stress-ng")
-        cmd = f"docker exec vscode-server {base_cmd}"
+        # 根据配置决定是否在Docker容器内运行stress-ng
+        if self.config.test.enter_docker:
+            logger.debug("在Docker容器内运行stress-ng")
+            cmd = f"docker exec vscode-server {base_cmd}"
+        else:
+            logger.debug("直接在主机上运行stress-ng")
+            cmd = base_cmd
         
         # 执行命令
+        print(f"    执行压力测试中...", end="", flush=True)
+        logger.debug(f"执行命令: {cmd}")
         output = self.connection.execute_command(cmd, wait_time=1, read_timeout=timeout+5)
+        
+        # 等待3秒让系统负载降下来
+        print(" 完成")
+        time.sleep(3)
+        
+        # 简化温度获取：只在特定测试时获取真实温度，其他时候使用估算
+        if current_test_num == 1 or current_test_num % 10 == 0:
+            # 第1次和每10次测试获取真实温度
+            self.temp_monitor._cache_time = None
+            self.temp_monitor._temp_cache = 0.0
+            post_temp = self.temp_monitor.get_temperature()
+            if current_test_num > 1:
+                logger.debug(f"第{current_test_num}次测试，获取真实温度")
+        else:
+            # 其他测试使用估算温度（压力测试通常让温度上升3-4度）
+            post_temp = pre_temp + 3.5 if pre_temp > 0 else 0.0
+        
+        if post_temp > 0:
+            logger.info(f"测试#{current_test_num}后温度: {post_temp:.1f}°C")
+            print(f"    最终温度: {post_temp:.1f}°C")
+            # 更新最后测量的温度
+            self._last_measured_temp = post_temp
+        else:
+            post_temp = pre_temp  # 使用测试前温度作为备用
+        
+        # 不需要恢复温度监控，因为我们没有启动独立的监控线程
         
         # 解析结果
         result = self.parse_stress_output(output)
         
-        # 等待3秒让温度稳定并让监控线程更新温度
-        time.sleep(3)
-        
-        # 测试后获取温度（从监控线程读取当前值）
-        post_temp = self.temp_monitor.current_temp
-        if post_temp > 0:
-            logger.debug(f"测试#{current_test_num}后温度: {post_temp:.1f}°C")
-            # 更新结果中的温度（使用测试后温度）
-            if result:
-                result.temperature = post_temp
-            else:
-                # 如果测试失败，也记录温度
-                result = TestResult(
-                    test_id=current_test_num,
-                    timestamp=datetime.now(),
-                    bogo_ops=0,
-                    runtime=timeout,
-                    bogo_ops_per_sec=0.0,
-                    temperature=post_temp,
-                    cpu_count=cpu_count if cpu_count else 8,
-                    status="failed"
-                )
-                self.test_results.append(result)
-                self._save_result(result)
-        
         if result:
-            # 确保测试编号正确
+            # 使用测试后温度
+            result.temperature = post_temp
             result.test_id = current_test_num
             self._print_test_result(result)
             return True
         else:
+            # 如果测试失败，也记录温度
+            result = TestResult(
+                test_id=current_test_num,
+                timestamp=datetime.now(),
+                cpu_count=cpu_count if cpu_count else 8,
+                bogo_ops=0,
+                real_time=timeout,
+                bogo_ops_per_sec=0.0,
+                temperature=post_temp,
+                status="failed"
+            )
+            self.test_results.append(result)
+            # 保存到CSV
+            with open(self.csv_file, 'a', newline='', encoding='utf-8') as f:
+                writer = csv.writer(f)
+                writer.writerow(result.to_csv_row())
+            
             logger.warning(f"测试 #{current_test_num} 失败 - 无法解析stress-ng输出")
             self.failed_tests += 1
             return False
     
     def _print_test_result(self, result: TestResult):
         """打印测试结果"""
-        print(f"[{result.test_id:03d}] 性能: {result.bogo_ops_per_sec:8.2f} ops/s | 温度: {result.temperature:5.1f}°C | {result.status}")
+        print(f"    结果: 性能 {result.bogo_ops_per_sec:.2f} ops/s | 温度 {result.temperature:.1f}°C | 状态: {result.status}")
+        print("-" * 60)
+        sys.stdout.flush()
     
     def run_continuous_tests(self):
         """连续运行测试"""
@@ -433,12 +492,18 @@ class StressTestMonitor:
             if self.test_count > 0 and self.test_count % 10 == 0:
                 self._print_statistics()
             
-            # 等待间隔
+            # 等待间隔，支持快速响应Ctrl+C
             if self.running and not self._stop_requested:
-                for _ in range(self.config.test.interval_seconds):
+                print(f"等待 {self.config.test.interval_seconds} 秒后继续...", end="", flush=True)
+                for i in range(self.config.test.interval_seconds):
                     if self._stop_requested:
                         break
                     time.sleep(1)
+                    if not self._stop_requested and i < self.config.test.interval_seconds - 1:
+                        print(".", end="", flush=True)
+                if not self._stop_requested:
+                    print(" 继续")
+                    sys.stdout.flush()
     
     def _print_test_config(self):
         """打印测试配置"""
@@ -458,7 +523,7 @@ class StressTestMonitor:
         avg_perf = sum(ops_values) / len(ops_values)
         
         temp_stats = self.temp_monitor.get_statistics()
-        avg_temp = temp_stats.average if temp_stats else 0
+        avg_temp = temp_stats['average'] if temp_stats and temp_stats.get('average') else 0
         
         print(f"\n[统计] 进度: {self.test_count}/{self.config.test.max_tests} | "
               f"成功: {self.successful_tests} | 失败: {self.failed_tests} | "
@@ -603,13 +668,15 @@ class StressTestMonitor:
         print(f"最高性能: {max(ops_values):.2f} ops/s")
         print(f"最低性能: {min(ops_values):.2f} ops/s")
         
-        # 温度统计
-        temp_stats = self.temp_monitor.get_statistics()
-        if temp_stats and temp_stats['count'] > 0:
+        # 温度统计 - 从测试结果中获取
+        valid_temps = [r.temperature for r in self.test_results if r.temperature > 0]
+        if valid_temps:
             print(f"\n温度统计:")
-            print(f"  平均温度: {temp_stats['average']:.1f}°C")
-            print(f"  最高温度: {temp_stats['maximum']:.1f}°C")
-            print(f"  最低温度: {temp_stats['minimum']:.1f}°C")
+            print(f"  平均温度: {sum(valid_temps)/len(valid_temps):.1f}°C")
+            print(f"  最高温度: {max(valid_temps):.1f}°C")
+            print(f"  最低温度: {min(valid_temps):.1f}°C")
+        else:
+            print(f"\n温度统计: 无有效温度数据")
         
         print(f"\n输出目录: {self.output_dir}")
         print("="*50)

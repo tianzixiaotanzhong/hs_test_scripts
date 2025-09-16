@@ -33,6 +33,7 @@ def main():
             driver.servo_on()
         except Exception:
             pass
+        
         sequence = [0, 1]
         idx = 0
         while True:
@@ -48,7 +49,25 @@ def main():
 
             pr = sequence[idx % len(sequence)]
             ok = driver.trigger_pr(pr)
-            print(f"触发PR{pr}: {'成功' if ok else '失败'}")
+            
+            if ok:
+                # 电机当前位置（指令单位）
+                motor_cmd_pos = driver.read_parameter('motor_position_cmd_unit')
+                motor_cmd_str = f"{motor_cmd_pos}" if motor_cmd_pos is not None else "读取失败"
+
+                # 读取PR路径配置的目标位置（指令单位），按文档：
+                # PR0 -> 0x6201/0x6202，PR1 -> 0x6209/0x620A
+                pr_target = driver.get_pr_configured_position(pr)
+                pr_target_str = f"{pr_target}" if pr_target is not None else "读取失败"
+
+                # 读取当前控制操作码（0x6002）
+                ctrl = driver.get_control_operation()
+                ctrl_str = f"0x{int(ctrl):04X}" if ctrl is not None else "读取失败"
+
+                print(f"触发PR{pr}: 成功 | 电机位置(指令单位): {motor_cmd_str} | PR配置目标(指令单位): {pr_target_str} | 控制操作: {ctrl_str}")
+            else:
+                print(f"触发PR{pr}: 失败")
+            
             idx += 1
 
             # 小延时，避免过快触发

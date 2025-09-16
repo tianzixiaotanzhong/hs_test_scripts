@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-温度监控模块 - 简化稳定版本
+温度监控模块 - 优化版本
 可独立运行或作为模块调用
 """
 
@@ -18,17 +18,19 @@ logger = logging.getLogger(__name__)
 
 
 class TemperatureMonitor:
-    """简化的温度监控器 - 参考stress_monitor_pro.py实现"""
+    """优化的温度监控器"""
     
-    def __init__(self, connection=None, output_dir: Optional[Path] = None):
+    def __init__(self, connection=None, output_dir: Optional[Path] = None, config=None):
         """
         初始化温度监控器
         connection: SSH或串口连接对象(可选)
         output_dir: 输出目录
+        config: 配置对象(可选)
         """
         self.connection = connection
         self.output_dir = output_dir or Path("results")
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.config = config
         
         # 温度数据
         self.current_temp = 0.0
@@ -42,7 +44,7 @@ class TemperatureMonitor:
         # 温度缓存（避免频繁调用）
         self._temp_cache = 0.0
         self._cache_time = None
-        self._cache_timeout = 2  # 缓存超时2秒
+        self._cache_timeout = 10  # 缓存超时10秒，避免重复调用
         
         # CSV文件
         self.csv_file = self.output_dir / "temperature_log.csv"
@@ -63,32 +65,36 @@ class TemperatureMonitor:
     
     def get_temperature(self) -> float:
         """
-        获取当前温度 - 使用与stress_monitor_pro.py相同的逻辑
-        优先获取CPU温度，使用最高值
-        注意：如果监控线程正在运行，直接返回当前值，避免重复调用
+        获取当前温度 - 优化版本
+        只使用sensors方法，支持缓存
         """
         if not self.connection:
             logger.warning("无连接可用")
             return 0.0
         
-        # 如果监控线程正在运行，直接返回当前值
-        if self.monitoring and self.current_temp > 0:
-            return self.current_temp
-        
-        # 检查缓存是否有效
+        # 检查缓存是否有效（避免频繁调用）
         if self._cache_time and self._temp_cache > 0:
             if (datetime.now() - self._cache_time).total_seconds() < self._cache_timeout:
+                logger.debug(f"使用缓存温度: {self._temp_cache:.1f}°C")
                 return self._temp_cache
         
         temp_value = 0.0
         
         try:
-            # 运行sensors命令
-            output = self.connection.execute_command(
-                "docker exec vscode-server sensors 2>/dev/null",
-                wait_time=2,
-                read_timeout=3
-            )
+            # 只使用sensors命令读取温度，增加超时处理
+            if hasattr(self, 'config') and self.config and self.config.test.enter_docker:
+                output = self.connection.execute_command(
+                    "docker exec vscode-server timeout 5s sensors 2>/dev/null",
+                    wait_time=1,
+                    read_timeout=6
+                )
+            else:
+                # 直接在主机上运行sensors命令，使用timeout限制执行时间
+                output = self.connection.execute_command(
+                    "timeout 5s sensors 2>/dev/null",
+                    wait_time=1,
+                    read_timeout=6
+                )
             
             if output and 'temp' in output.lower():
                 temp_value = self._parse_sensors_output(output)
@@ -99,39 +105,9 @@ class TemperatureMonitor:
                     self._cache_time = datetime.now()
                     return temp_value
                 else:
-                    # sensors命令返回了输出但解析失败，尝试备用方法
-                    logger.debug("sensors输出解析失败，尝试thermal_zone")
+                    logger.debug("sensors输出解析失败")
             else:
-                # sensors命令没有返回输出，尝试备用方法
-                logger.debug("sensors无输出，尝试thermal_zone")
-                
-                # 备用方法: thermal_zone
-                output = self.connection.execute_command(
-                    "cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | grep -v '^0$'",
-                    wait_time=1,
-                    read_timeout=2
-                )
-                
-                if output:
-                    temps = []
-                    for line in output.strip().split('\n'):
-                        try:
-                            line = line.strip()
-                            if line and line.isdigit() and line != '0':
-                                temp = int(line) / 1000.0
-                                if 20 < temp < 100:
-                                    temps.append(temp)
-                        except:
-                            pass
-                    
-                    if temps:
-                        # 使用最高温度，与参考实现一致
-                        temp_value = max(temps)
-                        logger.debug(f"温度(thermal): {temp_value:.1f}°C")
-                        self.current_temp = temp_value
-                        self._temp_cache = temp_value
-                        self._cache_time = datetime.now()
-                        return temp_value
+                logger.debug("sensors命令无输出或超时")
                     
         except Exception as e:
             logger.error(f"获取温度失败: {e}")
@@ -141,7 +117,7 @@ class TemperatureMonitor:
     
     def _parse_sensors_output(self, output: str) -> float:
         """
-        解析sensors输出 - 与stress_monitor_pro.py保持一致
+        解析sensors输出 - 优化版本
         优先使用CPU温度，返回最高值
         """
         lines = output.split('\n')
@@ -266,11 +242,9 @@ class TemperatureMonitor:
         
         if self.monitor_thread:
             self.monitor_thread.join(timeout=5)
+            self.monitor_thread = None
         
-        logger.info("温度监控已停止")
-        
-        # 保存摘要
-        self.save_summary()
+        logger.debug("温度监控已停止")
     
     def get_statistics(self) -> Dict:
         """获取温度统计信息"""
@@ -317,138 +291,135 @@ class TemperatureMonitor:
 
 def main():
     """独立运行温度监控"""
-    import argparse
     import sys
     from pathlib import Path
     
-    # 直接导入connection_manager（不用sys.path.append）
+    # 强制禁用输出缓冲
+    import os
+    os.environ['PYTHONUNBUFFERED'] = '1'
+    
+    # 设置UTF-8编码
+    if sys.platform == 'win32':
+        import locale
+        locale.setlocale(locale.LC_ALL, '')
+        try:
+            sys.stdout.reconfigure(encoding='utf-8')
+            sys.stderr.reconfigure(encoding='utf-8')
+        except:
+            pass
+    
+    # 实时打印函数
+    def print_realtime(*args, **kwargs):
+        print(*args, **kwargs)
+        sys.stdout.flush()
+    
+    # 导入模块
     import importlib.util
-    spec = importlib.util.spec_from_file_location(
-        "connection_manager", 
-        Path(__file__).parent / "src" / "connection_manager.py"
-    )
-    connection_manager = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(connection_manager)
     
-    spec = importlib.util.spec_from_file_location(
-        "config_loader",
-        Path(__file__).parent / "src" / "config_loader.py"
-    )
-    config_loader = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config_loader)
+    def import_module_from_file(module_name, file_path):
+        spec = importlib.util.spec_from_file_location(module_name, file_path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
     
-    parser = argparse.ArgumentParser(description='温度监控工具')
-    parser.add_argument('--config', '-c', default='config.json',
-                       help='配置文件路径 (默认: config.json)')
-    parser.add_argument('--interval', '-i', type=int, default=10,
-                       help='采样间隔(秒) (默认: 10)')
-    parser.add_argument('--duration', '-d', type=int, default=0,
-                       help='监控时长(分钟)，0表示持续监控 (默认: 0)')
+    src_dir = Path(__file__).parent / 'src'
+    config_loader = import_module_from_file('config_loader', src_dir / 'config_loader.py')
+    connection_manager = import_module_from_file('connection_manager', src_dir / 'connection_manager.py')
     
-    args = parser.parse_args()
+    Config = config_loader.Config
+    ConnectionFactory = connection_manager.ConnectionFactory
     
-    # 设置日志
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        datefmt='%Y-%m-%d %H:%M:%S'
-    )
+    print_realtime("="*50)
+    print_realtime("独立温度监控系统")
+    print_realtime("="*50)
+    print_realtime("按 Ctrl+C 停止监控")
+    print_realtime("="*50)
     
-    print("="*60)
-    print("温度监控工具 - 独立运行模式")
-    print("="*60)
+    config_file = 'config.json'
+    
+    # 检查配置文件
+    if not Path(config_file).exists():
+        print_realtime("配置文件不存在，请先运行 python monitor.py 生成配置")
+        return
     
     # 加载配置
-    config_path = Path(args.config)
-    if not config_path.exists():
-        print(f"配置文件不存在: {args.config}")
-        sys.exit(1)
+    config = Config.from_file(config_file)
+    if not config.validate():
+        print_realtime("配置文件验证失败")
+        return
     
-    config = config_loader.Config.from_file(args.config)
+    print_realtime(f"连接目标: {config.ssh.username}@{config.ssh.hostname}:{config.ssh.port}")
+    print_realtime(f"采样间隔: {config.monitor.temperature_interval}秒")
     
     # 创建连接
     try:
-        connection = connection_manager.ConnectionFactory.create_connection(
+        connection = ConnectionFactory.create_connection(
             config.connection_type,
             **config.get_connection_params()
         )
     except Exception as e:
-        print(f"创建连接失败: {e}")
-        sys.exit(1)
-    
-    # 建立连接
-    if not connection.connect():
-        print("连接失败")
-        sys.exit(1)
-    
-    print(f"[OK] 连接成功 ({config.connection_type})")
-    
-    # 设置输出目录和日志
-    output_dir = Path("results") / f"temperature_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-    output_dir.mkdir(parents=True, exist_ok=True)
-    
-    # 创建简单的控制台日志器
-    console_logger = logging.getLogger('ssh_console')
-    console_logger.setLevel(logging.DEBUG)
-    console_handler = logging.FileHandler(
-        output_dir / "console.log", encoding='utf-8', mode='w'
-    )
-    console_handler.setFormatter(
-        logging.Formatter('%(asctime)s - %(message)s', datefmt='%Y-%m-%d %H:%M:%S')
-    )
-    console_logger.addHandler(console_handler)
-    connection.setup_console_log(console_logger)
-    
-    # 创建温度监控器
-    monitor = TemperatureMonitor(connection, output_dir)
-    
-    # 测试温度读取
-    print("\n测试温度读取...")
-    temp = monitor.get_temperature()
-    if temp > 0:
-        print(f"[OK] 当前温度: {temp:.1f}°C")
-    else:
-        print("[ERROR] 无法读取温度")
-        connection.disconnect()
-        sys.exit(1)
-    
-    # 开始监控
-    print(f"\n开始温度监控 (间隔: {args.interval}秒)")
-    print("按 Ctrl+C 停止监控")
-    print("-"*60)
-    
-    monitor.start_monitoring(args.interval)
+        print_realtime(f"创建连接失败: {e}")
+        return
     
     try:
-        if args.duration > 0:
-            # 定时监控
-            time.sleep(args.duration * 60)
-        else:
-            # 持续监控
-            while True:
-                time.sleep(1)
+        if not connection.connect():
+            print_realtime("SSH连接失败")
+            return
+        print_realtime("SSH连接成功")
+    except Exception as e:
+        print_realtime(f"SSH连接异常: {e}")
+        return
+    
+    # 使用配置文件中的输出目录设置
+    output_dir = config.output.get_output_dir()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 创建温度监控器
+    temp_monitor = TemperatureMonitor(connection, output_dir, config)
+    
+    # 测试温度读取
+    print_realtime("测试温度读取...")
+    temp = temp_monitor.get_temperature()
+    if temp > 0:
+        print_realtime(f"当前温度: {temp:.1f}°C")
+    else:
+        print_realtime("无法读取温度")
+        connection.disconnect()
+        return
+    
+    print_realtime(f"\n开始温度监控，输出目录: {output_dir}")
+    print_realtime("-"*50)
+    
+    # 启动监控
+    temp_monitor.start_monitoring(interval=config.monitor.temperature_interval)
+    
+    try:
+        # 持续显示状态
+        while temp_monitor.monitoring:
+            time.sleep(5)
+            if temp_monitor.current_temp > 0:
+                print_realtime(f"[{datetime.now().strftime('%H:%M:%S')}] 当前温度: {temp_monitor.current_temp:.1f}°C")
     except KeyboardInterrupt:
-        print("\n\n用户中断")
-    
-    # 停止监控
-    monitor.stop_monitoring()
-    
-    # 显示统计
-    stats = monitor.get_statistics()
-    if stats['count'] > 0:
-        print("\n" + "="*60)
-        print("温度统计:")
-        print(f"  采样数: {stats['count']}")
-        print(f"  平均温度: {stats['average']:.1f}°C")
-        print(f"  最高温度: {stats['maximum']:.1f}°C")
-        print(f"  最低温度: {stats['minimum']:.1f}°C")
-        print(f"  当前温度: {stats['current']:.1f}°C")
-        print("="*60)
-    
-    # 断开连接
-    connection.disconnect()
-    print(f"\n输出目录: {output_dir}")
-    print("监控结束")
+        print_realtime("\n\n用户中断")
+    finally:
+        # 停止监控
+        temp_monitor.stop_monitoring()
+        temp_monitor.save_summary()
+        
+        # 显示统计
+        stats = temp_monitor.get_statistics()
+        if stats['count'] > 0:
+            print_realtime("\n" + "="*50)
+            print_realtime("温度监控统计:")
+            print_realtime(f"  采样数: {stats['count']}")
+            print_realtime(f"  平均温度: {stats['average']:.1f}°C")
+            print_realtime(f"  最高温度: {stats['maximum']:.1f}°C")
+            print_realtime(f"  最低温度: {stats['minimum']:.1f}°C")
+            print_realtime("="*50)
+        
+        connection.disconnect()
+        print_realtime(f"\n输出目录: {output_dir}")
+        print_realtime("温度监控结束")
 
 
 if __name__ == "__main__":

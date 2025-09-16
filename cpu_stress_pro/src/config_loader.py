@@ -55,14 +55,21 @@ class OutputConfig:
     create_timestamp_dir: bool = True
     save_charts: bool = True
     save_summary: bool = True
+    _cached_output_dir: Optional[Path] = field(default=None, init=False)
     
     def get_output_dir(self) -> Path:
-        """获取输出目录路径"""
+        """获取输出目录路径 - 缓存结果确保同一次运行使用相同目录"""
+        if self._cached_output_dir is not None:
+            return self._cached_output_dir
+            
         base_path = Path(self.base_dir)
         if self.create_timestamp_dir:
             timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-            return base_path / f"result_{timestamp}"
-        return base_path
+            self._cached_output_dir = base_path / f"result_{timestamp}"
+        else:
+            self._cached_output_dir = base_path
+            
+        return self._cached_output_dir
 
 
 @dataclass

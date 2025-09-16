@@ -55,19 +55,29 @@ class BaseConnection(ABC):
             
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         
-        # 打印到终端
-        if direction == "SEND":
-            print(f"[{timestamp}] >>> {content}")
-        else:
-            # 处理接收的内容，去除多余的空行
-            lines = content.split('\n')
-            for line in lines:
-                if line.strip():
-                    print(f"[{timestamp}] <<< {line}")
+        # 不打印到终端，避免干扰用户界面
+        # 只写入日志文件，保持界面清洁
+        
+        # 清理内容中的控制字符和多余换行
+        import re
+        clean_content = re.sub(r'\x1b\[[?0-9;]*[a-zA-Z]', '', content)  # 移除ANSI控制字符
+        clean_content = re.sub(r'\[?\?[0-9]+[lh]', '', clean_content)  # 移除终端控制序列
+        clean_content = re.sub(r'\n+', '\n', clean_content)  # 合并多个换行
+        clean_content = clean_content.strip()  # 移除首尾空白
         
         # 写入日志文件
-        if self.console_logger:
-            self.console_logger.info(f"[{direction}] {content}")
+        if self.console_logger and clean_content:
+            # 进一步清理：移除提示符，只保留有用内容
+            lines = clean_content.split('\n')
+            useful_lines = []
+            for line in lines:
+                line = line.strip()
+                if line and not line.endswith('@ubuntu:~$') and not line.endswith('~$'):
+                    useful_lines.append(line)
+            
+            if useful_lines:
+                final_content = '\n'.join(useful_lines)
+                self.console_logger.info(f"[{direction}] {final_content}")
     
     @abstractmethod
     def connect(self) -> bool:
@@ -97,6 +107,15 @@ class BaseConnection(ABC):
     def execute_command(self, command: str, wait_time: float = 1, read_timeout: float = 2) -> str:
         """执行命令并返回输出"""
         if self.send_command(command, wait_time):
+            return self.read_output(read_timeout)
+        return ""
+    
+    def execute_command_with_progress(self, command: str, wait_time: float = 1, read_timeout: float = 2, progress_callback=None) -> str:
+        """执行命令并返回输出，支持进度回调"""
+        if self.send_command(command, wait_time):
+            # 如果有进度回调，可以在这里调用
+            if progress_callback:
+                progress_callback("命令已发送，等待执行...")
             return self.read_output(read_timeout)
         return ""
 
@@ -223,7 +242,9 @@ class SSHConnection(BaseConnection):
                 'hostname': self.hostname,
                 'port': self.port,
                 'username': self.username,
-                'timeout': 10
+                'timeout': 15,  # 增加连接超时时间
+                'banner_timeout': 10,  # 添加banner超时
+                'auth_timeout': 10,  # 添加认证超时
             }
             
             if self.key_file and Path(self.key_file).exists():
